@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../../config/db");
 const env = require("../../config/env");
@@ -255,6 +256,118 @@ async function updateSubscription(req, res) {
   }
 }
 
+async function verifyPassword(req, res) {
+  const { password } = req.body;
+
+  if (!password) {
+    return res.status(400).json({ message: "Password is required" });
+  }
+
+  try {
+    const db = await getDb();
+
+    const user = await db
+      .collection("users")
+      .findOne({ _id: new ObjectId(req.decoded.id) });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const isHashed = /^\$2[aby]\$/.test(user.password);
+    const passwordMatch = isHashed
+      ? await bcrypt.compare(password, user.password)
+      : password === user.password;
+
+    if (!passwordMatch) {
+      return res.status(401).json({ message: "Incorrect password" });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Verify password error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+async function checkEmail(req, res) {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: "Email is required" });
+  }
+
+  try {
+    const db = await getDb();
+
+    const user = await db
+      .collection("users")
+      .findOne({ _id: new ObjectId(req.decoded.id) });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const existing = await db.collection("users").findOne({
+      _id: { $ne: user._id },
+      email: normalizedEmail,
+      role: user.role,
+    });
+
+    if (existing) {
+      return res.status(409).json({ message: "Email is already registered" });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Check email error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+async function updateEmail(req, res) {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: "Email is required" });
+  }
+
+  try {
+    const db = await getDb();
+
+    const user = await db
+      .collection("users")
+      .findOne({ _id: new ObjectId(req.decoded.id) });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const existing = await db.collection("users").findOne({
+      _id: { $ne: user._id },
+      email: normalizedEmail,
+      role: user.role,
+    });
+
+    if (existing) {
+      return res.status(409).json({ message: "Email is already registered" });
+    }
+
+    await db
+      .collection("users")
+      .updateOne({ _id: user._id }, { $set: { email: normalizedEmail } });
+
+    return res.status(200).json({ success: true, message: "Email updated successfully" });
+  } catch (error) {
+    console.error("Update email error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
 module.exports = {
   me,
   profileImage,
@@ -262,4 +375,7 @@ module.exports = {
   updateBadgeSubscription,
   updateProfile,
   updateSubscription,
+  verifyPassword,
+  checkEmail,
+  updateEmail,
 };
