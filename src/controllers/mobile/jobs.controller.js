@@ -154,6 +154,7 @@ async function nearbyJobs(req, res) {
         status: job.status,
         createdAt: job.createdAt,
         distanceKm: job.distanceKm,
+        consumerId: job.userId,
         consumerName: consumer?.name ?? null,
         consumerProfileImage: consumer?.profileImage ?? null,
       };
