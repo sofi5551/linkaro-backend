@@ -75,6 +75,47 @@ async function listProviders(req, res) {
   }
 }
 
+async function providerDetail(req, res) {
+  try {
+    const db = await getDb();
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid provider id" });
+    }
+
+    const provider = await db.collection("users").findOne(
+      { _id: new ObjectId(id), role: "provider" },
+      {
+        projection: {
+          name: 1,
+          profileImage: 1,
+          categories: 1,
+          address: 1,
+          badgeSubscriptionStatus: 1,
+          rating: 1,
+          reviewsCount: 1,
+        },
+      }
+    );
+
+    if (!provider) {
+      return res.status(404).json({ message: "Provider not found" });
+    }
+
+    const services = await db
+      .collection("providerServices")
+      .find({ providerId: new ObjectId(id) })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    return res.status(200).json({ success: true, provider, services });
+  } catch (error) {
+    console.error("Get provider detail error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
 async function profileImage(req, res) {
   const { id, token } = req.query;
 
@@ -448,6 +489,7 @@ async function updateEmail(req, res) {
 module.exports = {
   me,
   listProviders,
+  providerDetail,
   profileImage,
   subscription,
   updateBadgeSubscription,
