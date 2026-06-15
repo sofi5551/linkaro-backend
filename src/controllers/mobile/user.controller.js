@@ -77,7 +77,7 @@ async function listProviders(req, res) {
           address: 1,
           badgeSubscriptionStatus: 1,
           rating: 1,
-          reviewsCount: 1,
+          jobsCompleted: 1,
           phone: 1,
           lastSeenAt: 1,
         },
@@ -112,7 +112,7 @@ async function providerDetail(req, res) {
           address: 1,
           badgeSubscriptionStatus: 1,
           rating: 1,
-          reviewsCount: 1,
+          jobsCompleted: 1,
           phone: 1,
           lastSeenAt: 1,
         },
@@ -129,9 +129,45 @@ async function providerDetail(req, res) {
       .sort({ createdAt: -1 })
       .toArray();
 
-    return res
-      .status(200)
-      .json({ success: true, provider: withOnlineStatus(provider), services });
+    const reviewedJobs = await db
+      .collection("jobs")
+      .find({
+        assignedProviderId: new ObjectId(id),
+        status: "completed",
+        review: { $exists: true, $ne: "" },
+      })
+      .sort({ completedAt: -1 })
+      .project({ rating: 1, review: 1, completedAt: 1, userId: 1 })
+      .toArray();
+
+    const consumerIds = [
+      ...new Set(reviewedJobs.map((job) => job.userId.toString())),
+    ].map((consumerId) => new ObjectId(consumerId));
+
+    const consumers = await db
+      .collection("users")
+      .find({ _id: { $in: consumerIds } })
+      .project({ name: 1, profileImage: 1 })
+      .toArray();
+    const consumerMap = new Map(consumers.map((c) => [c._id.toString(), c]));
+
+    const reviews = reviewedJobs.map((job) => {
+      const consumer = consumerMap.get(job.userId.toString());
+      return {
+        rating: job.rating ?? 0,
+        review: job.review ?? "",
+        completedAt: job.completedAt,
+        consumerName: consumer?.name ?? null,
+        consumerProfileImage: consumer?.profileImage ?? null,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      provider: withOnlineStatus(provider),
+      services,
+      reviews,
+    });
   } catch (error) {
     console.error("Get provider detail error:", error);
     return res.status(500).json({ message: "Internal server error" });
