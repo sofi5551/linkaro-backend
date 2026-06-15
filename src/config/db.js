@@ -46,6 +46,11 @@ async function ensureIndexes() {
   );
 
   await jobs.createIndex({ geo: "2dsphere" });
+  await jobs.createIndex({ userId: 1, createdAt: -1 });
+  await jobs.createIndex({ assignedProviderId: 1, status: 1, completedAt: -1 });
+
+  const providerServices = db.collection("providerServices");
+  await providerServices.createIndex({ providerId: 1, createdAt: -1 });
 
   const messages = db.collection("messages");
   await messages.createIndex({ conversationId: 1, createdAt: -1 });
