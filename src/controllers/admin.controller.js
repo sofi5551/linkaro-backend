@@ -227,18 +227,21 @@ async function sendNotification(req, res) {
       return res.status(200).json({ success: true, sent: 0 });
     }
 
-    const createdAt = new Date();
-    const docs = recipients.map((u) => ({
-      userId: u._id,
-      type: "admin_announcement",
-      message: message.trim(),
-      read: false,
-      createdAt,
-    }));
+    const io = req.app.get("io");
+    const trimmedMessage = message.trim();
 
-    await db.collection("notifications").insertMany(docs);
+    await Promise.all(
+      recipients.map((u) =>
+        createNotification({
+          userId: u._id,
+          type: "admin_announcement",
+          message: trimmedMessage,
+          io,
+        })
+      )
+    );
 
-    return res.status(200).json({ success: true, sent: docs.length });
+    return res.status(200).json({ success: true, sent: recipients.length });
   } catch (error) {
     console.error("Send notification error:", error);
     return res.status(500).json({ message: "Internal server error" });
