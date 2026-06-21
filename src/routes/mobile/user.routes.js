@@ -12,6 +12,7 @@ const {
   verifyPassword,
   checkEmail,
   updateEmail,
+  deactivateAccount,
 } = require("../../controllers/mobile/user.controller");
 
 const router = express.Router();
@@ -28,5 +29,6 @@ router.post("/update-subscription", verifyMobileToken, updateSubscription);
 router.post("/verify-password", verifyMobileToken, verifyPassword);
 router.post("/check-email", verifyMobileToken, checkEmail);
 router.post("/update-email", verifyMobileToken, updateEmail);
+router.post("/deactivate", verifyMobileToken, deactivateAccount);
 
 module.exports = router;

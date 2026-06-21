@@ -4,6 +4,7 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("../../config/db");
 const env = require("../../config/env");
 const { sendEmail, otpEmail } = require("../../lib/mailer");
+const { deleteManyFromCloudinary } = require("../../lib/cloudinary");
 const {
   VALID_GENDERS,
   VALID_CATEGORIES,
@@ -76,8 +77,12 @@ async function login(req, res) {
       .collection("users")
       .findOne({ email: email.toLowerCase().trim(), role: role });
 
-    if (!user) {
-      return res.status(401).json({ message: "Invalid email or password" });
+    // A deactivated account (from "Delete Account") looks identical to a
+    // non-existent one — it can only come back via signup, which reactivates it.
+    if (!user || user.isActive === false) {
+      return res
+        .status(404)
+        .json({ message: "There is no user registered with this email" });
     }
 
     const isHashed = /^\$2[aby]\$/.test(user.password);
@@ -144,8 +149,9 @@ async function providerLogin(req, res) {
       .collection("users")
       .findOne({ email: normalizedEmail, role });
 
-    // ── User does not exist → tell the app to redirect to signup ─────────────
-    if (!user) {
+    // ── User does not exist, or was deactivated → redirect to signup, which
+    // reactivates a deactivated account with the freshly submitted details ──
+    if (!user || user.isActive === false) {
       return res.status(200).json({ success: false, newUser: true });
     }
 
@@ -288,21 +294,29 @@ async function signupConsumer(req, res) {
     const existing = await db
       .collection("users")
       .findOne({ email: email.toLowerCase().trim(), role: "consumer" });
+
+    // A deactivated account (from "Delete Account") is reactivated with the
+    // newly submitted details instead of blocking the signup as a duplicate.
+    let reactivateId = null;
     if (existing) {
-      return res.status(409).json({ message: "Email is already registered" });
+      if (existing.isActive === false) {
+        reactivateId = existing._id;
+      } else {
+        return res.status(409).json({ message: "Email is already registered" });
+      }
     }
 
     const existingCnic = await db
       .collection("users")
       .findOne({ cnic, role: "consumer" });
-    if (existingCnic) {
+    if (existingCnic && !existingCnic._id.equals(reactivateId)) {
       return res.status(409).json({ message: "CNIC is already registered" });
     }
 
     const existingPhone = await db
       .collection("users")
       .findOne({ phone: `+92${phone}`, role: "consumer" });
-    if (existingPhone) {
+    if (existingPhone && !existingPhone._id.equals(reactivateId)) {
       return res
         .status(409)
         .json({ message: "Phone number is already registered" });
@@ -310,17 +324,35 @@ async function signupConsumer(req, res) {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    await db.collection("users").insertOne({
-      name: fullName,
-      phone: `+92${phone}`,
-      email: email.toLowerCase().trim(),
-      cnic,
-      password: hashedPassword,
-      role: "consumer",
-      profileImage,
-      totalJobs: 0,
-      createdAt: new Date(),
-    });
+    if (reactivateId) {
+      await db.collection("users").updateOne(
+        { _id: reactivateId },
+        {
+          $set: {
+            name: fullName,
+            phone: `+92${phone}`,
+            cnic,
+            password: hashedPassword,
+            profileImage,
+            isActive: true,
+            updatedAt: new Date(),
+          },
+        }
+      );
+    } else {
+      await db.collection("users").insertOne({
+        name: fullName,
+        phone: `+92${phone}`,
+        email: email.toLowerCase().trim(),
+        cnic,
+        password: hashedPassword,
+        role: "consumer",
+        profileImage,
+        totalJobs: 0,
+        isActive: true,
+        createdAt: new Date(),
+      });
+    }
 
     return res
       .status(201)
@@ -408,21 +440,29 @@ async function signupProvider(req, res) {
     const existing = await db
       .collection("users")
       .findOne({ email: email.toLowerCase().trim(), role: "provider" });
+
+    // A deactivated account (from "Delete Account") is reactivated with the
+    // newly submitted details instead of blocking the signup as a duplicate.
+    let reactivateId = null;
     if (existing) {
-      return res.status(409).json({ message: "Email is already registered" });
+      if (existing.isActive === false) {
+        reactivateId = existing._id;
+      } else {
+        return res.status(409).json({ message: "Email is already registered" });
+      }
     }
 
     const existingCnic = await db
       .collection("users")
       .findOne({ cnic, role: "provider" });
-    if (existingCnic) {
+    if (existingCnic && !existingCnic._id.equals(reactivateId)) {
       return res.status(409).json({ message: "CNIC is already registered" });
     }
 
     const existingPhone = await db
       .collection("users")
       .findOne({ phone: `+92${phone}`, role: "provider" });
-    if (existingPhone) {
+    if (existingPhone && !existingPhone._id.equals(reactivateId)) {
       return res
         .status(409)
         .json({ message: "Phone number is already registered" });
@@ -430,36 +470,76 @@ async function signupProvider(req, res) {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const userDoc = {
-      name,
-      phone: `+92${phone}`,
-      email: email.toLowerCase().trim(),
-      address: { street, city, zip },
-      cnic,
-      gender,
-      category,
-      about: typeof about === "string" ? about.trim() : "",
-      password: hashedPassword,
-      role: "provider",
-      profileImage,
-      totalJobs: 0,
-      cnicFrontImage,
-      cnicBackImage,
-      subscriptionStatus: "inactive",
-      badgeSubscriptionStatus: "inactive",
-      registrationStatus: false,
-      createdAt: new Date(),
-    };
-
     const lat = Number(latitude);
     const lng = Number(longitude);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      userDoc.latitude = lat;
-      userDoc.longitude = lng;
-      userDoc.geo = { type: "Point", coordinates: [lng, lat] };
-    }
+    const geoFields = Number.isFinite(lat) && Number.isFinite(lng)
+      ? { latitude: lat, longitude: lng, geo: { type: "Point", coordinates: [lng, lat] } }
+      : {};
 
-    await db.collection("users").insertOne(userDoc);
+    if (reactivateId) {
+      // Reactivating with a different category invalidates the services
+      // posted under the old one — wipe them (and their images) first.
+      if (existing.category && existing.category !== category) {
+        const oldServices = await db
+          .collection("providerServices")
+          .find({ providerId: reactivateId })
+          .toArray();
+
+        if (oldServices.length > 0) {
+          const allImages = oldServices.flatMap((s) => s.images || []);
+          deleteManyFromCloudinary(allImages);
+          await db
+            .collection("providerServices")
+            .deleteMany({ providerId: reactivateId });
+        }
+      }
+
+      await db.collection("users").updateOne(
+        { _id: reactivateId },
+        {
+          $set: {
+            name,
+            phone: `+92${phone}`,
+            address: { street, city, zip },
+            cnic,
+            gender,
+            category,
+            about: typeof about === "string" ? about.trim() : "",
+            password: hashedPassword,
+            profileImage,
+            cnicFrontImage,
+            cnicBackImage,
+            registrationStatus: false,
+            isActive: true,
+            updatedAt: new Date(),
+            ...geoFields,
+          },
+        }
+      );
+    } else {
+      await db.collection("users").insertOne({
+        name,
+        phone: `+92${phone}`,
+        email: email.toLowerCase().trim(),
+        address: { street, city, zip },
+        cnic,
+        gender,
+        category,
+        about: typeof about === "string" ? about.trim() : "",
+        password: hashedPassword,
+        role: "provider",
+        profileImage,
+        totalJobs: 0,
+        cnicFrontImage,
+        cnicBackImage,
+        subscriptionStatus: "inactive",
+        badgeSubscriptionStatus: "inactive",
+        registrationStatus: false,
+        isActive: true,
+        createdAt: new Date(),
+        ...geoFields,
+      });
+    }
 
     return res
       .status(201)
@@ -493,7 +573,7 @@ async function switchRole(req, res) {
       .collection("users")
       .findOne({ email: currentUser.email, role: targetRole });
 
-    if (!targetUser) {
+    if (!targetUser || targetUser.isActive === false) {
       return res.status(404).json({
         message: `You don't have a ${targetRole} account to switch to.`,
       });

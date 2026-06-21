@@ -442,6 +442,23 @@ async function updateProfile(req, res) {
       return res.status(400).json({ message: "No fields to update" });
     }
 
+    // Changing category invalidates the services the provider posted under
+    // their old one — wipe them (and their images) before applying the change.
+    if (update.category && update.category !== user.category) {
+      const oldServices = await db
+        .collection("providerServices")
+        .find({ providerId: user._id })
+        .toArray();
+
+      if (oldServices.length > 0) {
+        const allImages = oldServices.flatMap((s) => s.images || []);
+        deleteManyFromCloudinary(allImages);
+        await db
+          .collection("providerServices")
+          .deleteMany({ providerId: user._id });
+      }
+    }
+
     await db
       .collection("users")
       .updateOne({ _id: new ObjectId(req.decoded.id) }, { $set: update });
@@ -606,6 +623,28 @@ async function updateEmail(req, res) {
   }
 }
 
+// "Delete Account" — soft-deletes the account instead of removing it, so it
+// can be reactivated by signing up again with the same email (see
+// signupConsumer/signupProvider). Login and provider-switch both treat a
+// deactivated account as if it doesn't exist.
+async function deactivateAccount(req, res) {
+  try {
+    const db = await getDb();
+
+    await db
+      .collection("users")
+      .updateOne(
+        { _id: new ObjectId(req.decoded.id) },
+        { $set: { isActive: false, updatedAt: new Date() } }
+      );
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Deactivate account error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
 module.exports = {
   me,
   listProviders,
@@ -618,4 +657,5 @@ module.exports = {
   verifyPassword,
   checkEmail,
   updateEmail,
+  deactivateAccount,
 };
