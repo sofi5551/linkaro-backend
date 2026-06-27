@@ -27,13 +27,26 @@ async function checkExpiredSubscriptions(req, res) {
     const db = await getDb();
     const now = new Date();
 
-    const expired = await db
+    // Only each user's latest subscription per type matters — an old,
+    // already-superseded subscription's stale expiry date must never flip
+    // a current renewal back to inactive.
+    const latestSubs = await db
       .collection("subscriptions")
-      .find({
-        subscriptionEndDate: { $lt: now, $exists: true },
-      })
-      .project({ _id: 1, userId: 1, subscriptionType: 1 })
+      .aggregate([
+        { $sort: { subscriptionDate: -1 } },
+        {
+          $group: {
+            _id: { userId: "$userId", subscriptionType: "$subscriptionType" },
+            doc: { $first: "$$ROOT" },
+          },
+        },
+        { $replaceRoot: { newRoot: "$doc" } },
+      ])
       .toArray();
+
+    const expired = latestSubs.filter(
+      (sub) => sub.subscriptionEndDate && sub.subscriptionEndDate < now
+    );
 
     if (expired.length === 0) {
       return res.status(200).json({ success: true, updated: 0 });
