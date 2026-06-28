@@ -97,7 +97,19 @@ async function getJobById(req, res) {
     const isAssignedProvider =
       job.assignedProviderId && job.assignedProviderId.toString() === myId;
 
-    if (!isPoster && !isAssignedProvider) {
+    let isEligibleProvider = false;
+    if (!isPoster && !isAssignedProvider && job.status === "open") {
+      const requester = await db
+        .collection("users")
+        .findOne(
+          { _id: new ObjectId(myId) },
+          { projection: { role: 1, category: 1 } }
+        );
+      isEligibleProvider =
+        requester?.role === "provider" && requester.category === job.category;
+    }
+
+    if (!isPoster && !isAssignedProvider && !isEligibleProvider) {
       return res.status(403).json({ message: "Access denied" });
     }
 
